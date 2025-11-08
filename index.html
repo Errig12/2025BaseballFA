@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Player Compare</title>
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+  .hi-a { background: rgba(22,219,101,0.15); border-radius: 8px; padding: 4px 6px; }
+  .hi-b { background: rgba(42,170,255,0.18); border-radius: 8px; padding: 4px 6px; }
+  .eq   { background: rgba(255,255,255,0.06); border-radius: 8px; padding: 4px 6px; }
+  .krow > div { min-height: 24px; display: flex; align-items: center; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="brand">
+        <div class="logo">⚾</div>
+        <div>Player Compare</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="toolbar">
+        <label>
+          <span>Filter by position</span>
+          <select id="positionFilter"><option value="">All positions</option></select>
+        </label>
+
+        <label>
+          <span>Player A</span>
+          <select id="playerA"><option value="">— Loading… —</option></select>
+        </label>
+
+        <label>
+          <span>Player B</span>
+          <select id="playerB"><option value="">— Loading… —</option></select>
+        </label>
+      </div>
+
+      <div class="compare">
+        <div class="card" style="grid-column:1 / -1;">
+          <h3>Selected Stats</h3>
+          <div class="kv" id="kv">
+            <div class="krow header-row"><div class="label">Stat</div><div>Player A</div><div>Player B</div></div>
+          </div>
+          <div class="controls" style="margin-top:12px;">
+            <button class="btn" id="swapBtn">Swap A ↔ B</button>
+            <span style="color:#a7b0be; font-size:12px;">(Choose players from the dropdowns to compare.)</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">Chunked data — optimized for GitHub Pages.</div>
+  </div>
+
+<script>
+let COLUMNS = [];
+let CHUNKS = [];
+let ROW_INDEX = []; // {{i, name, pos}}
+
+let NAME_COL = null;
+let POS_COL = null;
+
+const FIELDS = [
+  {label:"Name", keys:["name","player","player name","full name"]},
+  {label:"Position", keys:["position","postion","pos","role"]},
+  {label:"Age", keys:["age"]},
+  {label:"Bat Handess", keys:["bat handess","bat handness","bat hand","bats"]},
+  {label:"Games Played %", keys:["games played %","games  played %","gp %","games pct"]},
+  {label:"Doubles", keys:["2b","doubles"]},
+  {label:"Home Runs", keys:["hr","homers","home runs"]},
+  {label:"RBI", keys:["rbi","rbi's"]},
+  {label:"Walk Rate %", keys:["walk rate %","bb%","bb rate","walk%"]},
+  {label:"K Rate %", keys:["k rate %","k%","strikeout rate","k's"]},
+  {label:"AVG", keys:["avg","batting average"]},
+  {label:"OPS", keys:["ops"]},
+  {label:"OPS+", keys:["ops+"]},
+  {label:"OPS vs RHP", keys:["ops vs rhp","ops v rhp"]},
+  {label:"OPS vs LHP", keys:["ops vs lhp","ops v lhp"]}
+];
+
+
+function toNumberLike(x){
+  const s = (x === null || x === undefined) ? "" : String(x).trim();
+  const hadPct = /%$/.test(s);
+  const num = parseFloat(s.replace(/[^0-9.\-]/g, ""));
+  return { ok: !isNaN(num), num, hadPct, raw: s };
+}
+function fmtField(label, value){
+  const want2dp = label === "Games Played %" || label === "Walk Rate %" || label === "K Rate %";
+  if (want2dp){
+    const r = toNumberLike(value);
+    if (r.ok){
+      return r.num.toFixed(2) + "%";
+    }
+  }
+  return (value === null || value === undefined) ? "" : String(value);
+}
+function lc(a){ return a ? a.toString().toLowerCase().trim() : ""; }
+
+function guessCol(cols, keys){
+  const lcCols = cols.map(c => lc(c));
+  for (const k of keys){
+    const i = lcCols.indexOf(k);
+    if (i !== -1) return cols[i];
+  }
+  for (const k of keys){
+    for (let i=0;i<cols.length;i++){
+      if (lcCols[i].includes(k)) return cols[i];
+    }
+  }
+  return null;
+}
+function guessNameCol(cols){ return guessCol(cols, ["name","player","player name","full name"]) || cols[0]; }
+function guessPosCol(cols){ return guessCol(cols, ["position","postion","pos","role"]); }
+
+async function loadMeta(){
+  const [colsRes, metaRes] = await Promise.all([
+    fetch("data/Players.columns.json"),
+    fetch("data/Players.meta.json"),
+  ]);
+  COLUMNS = await colsRes.json();
+  const meta = await metaRes.json();
+  CHUNKS = meta.chunks;
+
+  NAME_COL = guessNameCol(COLUMNS);
+  POS_COL = guessPosCol(COLUMNS);
+
+  // Build index (name + position)
+  ROW_INDEX = [];
+  for (let ci=0; ci<CHUNKS.length; ci++){
+    const r = await fetch("data/" + CHUNKS[ci]);
+    const rows = await r.json();
+    const base = ci * meta.chunk_size;
+    for (let j=0;j<rows.length;j++){
+      const row = rows[j];
+      const name = (row[NAME_COL] ?? "").toString().trim();
+      const pos  = POS_COL ? (row[POS_COL] ?? "").toString().trim() : "";
+      if (name) ROW_INDEX.push({i: base + j, name, pos});
+    }
+  }
+}
+
+function populatePositionFilter(){
+  const sel = document.getElementById("positionFilter");
+  const set = new Set();
+  for (const it of ROW_INDEX){ if (it.pos) set.add(it.pos); }
+  [...set].sort().forEach(v => {
+    const opt = document.createElement("option"); opt.value = v; opt.textContent = v; sel.appendChild(opt);
+  });
+}
+
+function populatePlayerSelects(){
+  const a = document.getElementById("playerA");
+  const b = document.getElementById("playerB");
+  const pos = document.getElementById("positionFilter").value;
+  const mk = (sel) => {
+    sel.innerHTML = '<option value="">— Select —</option>';
+    ROW_INDEX.forEach((it) => {
+      if (pos && it.pos !== pos) return;
+      const opt = document.createElement("option");
+      opt.value = it.i;
+      opt.textContent = it.name + (it.pos ? " ("+it.pos+")" : "");
+      sel.appendChild(opt);
+    });
+  };
+  mk(a); mk(b);
+}
+
+async function fetchRow(globalIndex){
+  if (globalIndex === "" || globalIndex === null) return null;
+  const meta = await (await fetch("data/Players.meta.json")).json();
+  const chunkSize = meta.chunk_size;
+  const ci = Math.floor(globalIndex / chunkSize);
+  const off = globalIndex % chunkSize;
+  const rows = await (await fetch("data/" + meta.chunks[ci])).json();
+  return rows[off];
+}
+
+function buildFieldMap(){
+  const map = [];
+  for (const f of FIELDS){
+    const col = guessCol(COLUMNS, f.keys);
+    if (col) map.push({label:f.label, col});
+  }
+  
+function compareAndHighlight(label, aDiv, bDiv){
+  // Fields where we already format to 2dp remain as-is for textContent; we only compare numerically.
+  const aVal = aDiv.textContent, bVal = bDiv.textContent;
+  const an = toNumberLike(aVal), bn = toNumberLike(bVal);
+  // Clear previous classes
+  aDiv.classList.remove("hi-a","hi-b","eq");
+  bDiv.classList.remove("hi-a","hi-b","eq");
+  if (!an.ok || !bn.ok){ return; }
+  if (Math.abs(an.num - bn.num) < 1e-9){
+    aDiv.classList.add("eq"); bDiv.classList.add("eq"); return;
+  }
+  // Default rule: higher is better
+  if (an.num > bn.num){ aDiv.classList.add("hi-a"); }
+  else { bDiv.classList.add("hi-b"); }
+}
+
+
+async function renderCompare(){
+  const aSel = document.getElementById("playerA").value;
+  const bSel = document.getElementById("playerB").value;
+  const kv = document.getElementById("kv");
+  // Clear rows except header
+  kv.innerHTML = '<div class="krow header-row"><div class="label">Stat</div><div>Player A</div><div>Player B</div></div>';
+  const map = buildFieldMap();
+  const [rowA, rowB] = await Promise.all([
+    aSel ? fetchRow(parseInt(aSel,10)) : Promise.resolve(null),
+    bSel ? fetchRow(parseInt(bSel,10)) : Promise.resolve(null),
+  ]);
+  for (const m of map){
+    const div = document.createElement("div");
+    div.className = "krow";
+    const la = document.createElement("div");
+    la.className = "label"; la.textContent = m.label;
+    const va = document.createElement("div");
+    const vb = document.createElement("div");
+    va.textContent = rowA ? fmtField(m.label, rowA[m.col]) : "";
+    vb.textContent = rowB ? fmtField(m.label, rowB[m.col]) : "";
+    div.appendChild(la); div.appendChild(va); div.appendChild(vb);
+    compareAndHighlight(m.label, va, vb);
+    kv.appendChild(div);
+  }
+}
+
+document.getElementById("positionFilter").addEventListener("change", () => {
+  populatePlayerSelects();
+  renderCompare();
+});
+document.getElementById("playerA").addEventListener("change", renderCompare);
+document.getElementById("playerB").addEventListener("change", renderCompare);
+document.getElementById("swapBtn").addEventListener("click", () => {
+  const a = document.getElementById("playerA");
+  const b = document.getElementById("playerB");
+  const tmp = a.value; a.value = b.value; b.value = tmp;
+  renderCompare();
+});
+
+(async function init(){
+  await loadMeta();
+  populatePositionFilter();
+  populatePlayerSelects();
+  renderCompare();
+})();
+</script>
+</body>
+</html>
