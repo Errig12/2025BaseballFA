@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Roster Selector</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="brand">
+        <div class="logo">⚾</div>
+        <div>Roster Selector</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="toolbar">
+        <label>
+          <span>Player dropdown (from Players sheet)</span>
+          <select id="playerSelect">
+            <option value="">— Select a player —</option>
+          </select>
+        </label>
+
+        <label>
+          <span>Filter by position (optional)</span>
+          <select id="positionFilter">
+            <option value="">All positions</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="grid">
+        <div class="card">
+          <h3>Selected Player Details</h3>
+          <div id="playerDetails" class="small">Choose a player to view their row.</div>
+          <div id="playerTableWrap" style="margin-top:8px; display:none;">
+            <table id="playerTable">
+              <thead></thead>
+              <tbody></tbody>
+            </table>
+            <div style="margin-top:10px;">
+              <button class="btn" id="addToSlotBtn">Add to lineup slot</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Lineup Slots (mimic Sheet1 cells)</h3>
+          <div class="small" style="margin-bottom:8px;">Click “Add to lineup slot” to place the selected player into the next open slot.</div>
+          <div class="slot-list" id="slotList"></div>
+          <div style="margin-top:10px;">
+            <button class="btn" id="clearSlotsBtn">Clear slots</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">Powered by your Excel data — no backend needed.</div>
+  </div>
+
+<script>
+let DATA = null;
+let NAME_COL = null;
+let POS_COL = null;
+
+function guessNameCol(cols) {
+  const candidates = ["name", "player", "player name", "full name"];
+  const lc = cols.map(c => c.toLowerCase());
+  for (const c of candidates) {
+    const idx = lc.indexOf(c);
+    if (idx !== -1) return cols[idx];
+  }
+  // fallback: first column with mostly non-empty text
+  return cols[0];
+}
+
+function guessPosCol(cols) {
+  const lc = cols.map(c => c.toLowerCase());
+  const idx = lc.indexOf("position");
+  if (idx !== -1) return cols[idx];
+  // try common abbreviations
+  for (const key of ["pos","role"]) {
+    const j = lc.indexOf(key);
+    if (j !== -1) return cols[j];
+  }
+  return null;
+}
+
+async function load() {
+  const res = await fetch("data/Players.json");
+  DATA = await res.json();
+  const cols = DATA.columns;
+  NAME_COL = guessNameCol(cols);
+  POS_COL = guessPosCol(cols);
+
+  populatePositionFilter();
+  populatePlayerSelect();
+  setupSlots();
+}
+
+function populatePositionFilter() {
+  const sel = document.getElementById("positionFilter");
+  const set = new Set();
+  if (POS_COL) {
+    for (const r of DATA.rows) {
+      const v = (r[POS_COL] ?? "").toString().trim();
+      if (v) set.add(v);
+    }
+  }
+  [...set].sort().forEach(v => {
+    const opt = document.createElement("option");
+    opt.value = v;
+    opt.textContent = v;
+    sel.appendChild(opt);
+  });
+}
+
+function populatePlayerSelect() {
+  const sel = document.getElementById("playerSelect");
+  const posFilter = document.getElementById("positionFilter").value;
+  sel.innerHTML = '<option value="">— Select a player —</option>';
+  for (let i=0;i<DATA.rows.length;i++) {
+    const r = DATA.rows[i];
+    const name = (r[NAME_COL] ?? "").toString().trim();
+    if (!name) continue;
+    if (posFilter && POS_COL) {
+      const p = (r[POS_COL] ?? "").toString().trim();
+      if (p !== posFilter) continue;
+    }
+    const opt = document.createElement("option");
+    opt.value = i;
+    opt.textContent = name;
+    sel.appendChild(opt);
+  }
+}
+
+function renderPlayerDetails(idx) {
+  const details = document.getElementById("playerDetails");
+  const wrap = document.getElementById("playerTableWrap");
+  const thead = document.querySelector("#playerTable thead");
+  const tbody = document.querySelector("#playerTable tbody");
+
+  if (idx === "" || idx === null) {
+    details.style.display = "block";
+    details.textContent = "Choose a player to view their row.";
+    wrap.style.display = "none";
+    return;
+  }
+
+  const row = DATA.rows[parseInt(idx, 10)];
+  details.style.display = "none";
+  wrap.style.display = "block";
+
+  // Head
+  thead.innerHTML = "";
+  const trh = document.createElement("tr");
+  for (const c of DATA.columns) {
+    const th = document.createElement("th");
+    th.textContent = c;
+    trh.appendChild(th);
+  }
+  thead.appendChild(trh);
+
+  // Body (single row)
+  tbody.innerHTML = "";
+  const tr = document.createElement("tr");
+  for (const c of DATA.columns) {
+    const td = document.createElement("td");
+    td.textContent = (row[c] ?? "").toString();
+    tr.appendChild(td);
+  }
+  tbody.appendChild(tr);
+}
+
+function setupSlots() {
+  const slotList = document.getElementById("slotList");
+  slotList.innerHTML = "";
+  const slots = 10;
+  for (let i=0;i<slots;i++) {
+    const div = document.createElement("div");
+    div.className = "slot";
+    div.innerHTML = '<span class="slot-text">Empty</span><button class="btn btn-small remove" data-idx="'+i+'">Clear</button>';
+    slotList.appendChild(div);
+  }
+}
+
+function addToNextSlot(playerName) {
+  const slotList = document.getElementById("slotList");
+  const slots = slotList.querySelectorAll(".slot");
+  for (const s of slots) {
+    const txt = s.querySelector(".slot-text");
+    if (txt.textContent === "Empty") {
+      txt.textContent = playerName;
+      return;
+    }
+  }
+  alert("All slots are full. Clear a slot to add another player.");
+}
+
+document.getElementById("positionFilter").addEventListener("change", () => {
+  populatePlayerSelect();
+  renderPlayerDetails("");
+});
+
+document.getElementById("playerSelect").addEventListener("change", (e) => {
+  renderPlayerDetails(e.target.value);
+});
+
+document.getElementById("addToSlotBtn").addEventListener("click", () => {
+  const sel = document.getElementById("playerSelect");
+  const idx = sel.value;
+  if (!idx) { alert("Pick a player first."); return; }
+  const name = (DATA.rows[parseInt(idx,10)][NAME_COL] ?? "").toString();
+  addToNextSlot(name);
+});
+
+document.getElementById("slotList").addEventListener("click", (e) => {
+  if (e.target && e.target.classList.contains("remove")) {
+    const slot = e.target.closest(".slot");
+    slot.querySelector(".slot-text").textContent = "Empty";
+  }
+});
+
+load();
+</script>
+</body>
+</html>
